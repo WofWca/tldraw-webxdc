@@ -1,3 +1,4 @@
+// @ts-nocheck
 import {
 	InstancePresenceRecordType,
 	TLAnyShapeUtilConstructor,
@@ -16,19 +17,20 @@ import {
 } from '@tldraw/tldraw'
 import { useEffect, useMemo, useState } from 'react'
 import { YKeyValue } from 'y-utility/y-keyvalue'
-import { WebsocketProvider } from 'y-websocket'
+// import { WebsocketProvider } from 'y-websocket'
+import { WebxdcSyncProvider } from 'webxdc-yjs-provider'
 import * as Y from 'yjs'
 import { DEFAULT_STORE } from './default_store'
 
 export function useYjsStore({
-	roomId = 'example',
-	hostUrl = import.meta.env.MODE === 'development'
+	_roomId = 'example',
+	_hostUrl = import.meta.env.MODE === 'development'
 		? 'ws://localhost:1234'
 		: 'wss://demos.yjs.dev',
 	shapeUtils = [],
 }: Partial<{
-	hostUrl: string
-	roomId: string
+	_hostUrl: string
+	_roomId: string
 	version: number
 	shapeUtils: TLAnyShapeUtilConstructor[]
 }>) {
@@ -44,23 +46,45 @@ export function useYjsStore({
 		status: 'loading',
 	})
 
-	const { yDoc, yStore, room } = useMemo(() => {
+	const { yDoc, yStore, webxdcSyncProvider } = useMemo(() => {
 		const yDoc = new Y.Doc({ gc: true })
+		const roomId = 'example'; // TODO Do we need this? Can we use this?
 		const yArr = yDoc.getArray<{ key: string; val: TLRecord }>(`tl_${roomId}`)
 		const yStore = new YKeyValue(yArr)
+
+		console.log('initialized')
+		// const webxdcSyncProvider = undefined;
+		const webxdcSyncProvider = new WebxdcSyncProvider(yDoc)
+		// webxdcSyncProvider.onNeedToSendLocalUpdates = webxdcSyncProvider.sendUnsentLocalUpdates
+
+		let len = 0;
+		let count = 0;
+		yDoc.on('updateV2', update => {
+			len += update.length;
+			count++;
+		});
+		setInterval(() => {
+			console.log('bytes', len, 'count', count);
+			len = 0;
+			count = 0;
+		}, 2500)
 
 		return {
 			yDoc,
 			yStore,
-			room: new WebsocketProvider(hostUrl, roomId, yDoc, { connect: true }),
+			// room: new WebsocketProvider(hostUrl, roomId, yDoc, { connect: true }),
+			webxdcSyncProvider,
 		}
-	}, [hostUrl, roomId])
+	}, [/* hostUrl, roomId */])
 
 	useEffect(() => {
 		setStoreWithStatus({ status: 'loading' })
 
 		const unsubs: (() => void)[] = []
 
+		// TODO do we execute this after reading all stored webxdc messages?
+		webxdcSyncProvider.initialStateRestored.then(handleSync);
+		// Promise.resolve().then(handleSync);
 		function handleSync() {
 			// 1.
 			// Connect store to yjs store and vis versa, for both the document and awareness
@@ -131,84 +155,86 @@ export function useYjsStore({
 
 			/* -------------------- Awareness ------------------- */
 
-			const yClientId = room.awareness.clientID.toString()
-			setUserPreferences({ id: yClientId })
+			// const yClientId = room.awareness.clientID.toString()
 
-			const userPreferences = computed<{
-				id: string
-				color: string
-				name: string
-			}>('userPreferences', () => {
-				const user = getUserPreferences()
-				return {
-					id: user.id,
-					color: user.color ?? defaultUserPreferences.color,
-					name: user.name ?? defaultUserPreferences.name,
-				}
-			})
+			// TODO do we need this? Or is this all for awareness?
+			// setUserPreferences({ id: yClientId })
 
-			// Create the instance presence derivation
-			const presenceId = InstancePresenceRecordType.createId(yClientId)
-			const presenceDerivation =
-				createPresenceStateDerivation(userPreferences, presenceId)(store)
+			// const userPreferences = computed<{
+			// 	id: string
+			// 	color: string
+			// 	name: string
+			// }>('userPreferences', () => {
+			// 	const user = getUserPreferences()
+			// 	return {
+			// 		id: user.id,
+			// 		color: user.color ?? defaultUserPreferences.color,
+			// 		name: user.name ?? defaultUserPreferences.name,
+			// 	}
+			// })
 
-			// Set our initial presence from the derivation's current value
-			room.awareness.setLocalStateField('presence', presenceDerivation.value)
+			// // Create the instance presence derivation
+			// const presenceId = InstancePresenceRecordType.createId(yClientId)
+			// const presenceDerivation =
+			// 	createPresenceStateDerivation(userPreferences, presenceId)(store)
 
-			// When the derivation change, sync presence to to yjs awareness
-			unsubs.push(
-				react('when presence changes', () => {
-					const presence = presenceDerivation.value
-					requestAnimationFrame(() => {
-						room.awareness.setLocalStateField('presence', presence)
-					})
-				})
-			)
+			// // Set our initial presence from the derivation's current value
+			// room.awareness.setLocalStateField('presence', presenceDerivation.value)
 
-			// Sync yjs awareness changes to the store
-			const handleUpdate = (update: {
-				added: number[]
-				updated: number[]
-				removed: number[]
-			}) => {
-				const states = room.awareness.getStates() as Map<
-					number,
-					{ presence: TLInstancePresence }
-				>
+			// // When the derivation change, sync presence to to yjs awareness
+			// unsubs.push(
+			// 	react('when presence changes', () => {
+			// 		const presence = presenceDerivation.value
+			// 		requestAnimationFrame(() => {
+			// 			room.awareness.setLocalStateField('presence', presence)
+			// 		})
+			// 	})
+			// )
 
-				const toRemove: TLInstancePresence['id'][] = []
-				const toPut: TLInstancePresence[] = []
+			// // Sync yjs awareness changes to the store
+			// const handleUpdate = (update: {
+			// 	added: number[]
+			// 	updated: number[]
+			// 	removed: number[]
+			// }) => {
+			// 	const states = room.awareness.getStates() as Map<
+			// 		number,
+			// 		{ presence: TLInstancePresence }
+			// 	>
 
-				// Connect records to put / remove
-				for (const clientId of update.added) {
-					const state = states.get(clientId)
-					if (state?.presence && state.presence.id !== presenceId) {
-						toPut.push(state.presence)
-					}
-				}
+			// 	const toRemove: TLInstancePresence['id'][] = []
+			// 	const toPut: TLInstancePresence[] = []
 
-				for (const clientId of update.updated) {
-					const state = states.get(clientId)
-					if (state?.presence && state.presence.id !== presenceId) {
-						toPut.push(state.presence)
-					}
-				}
+			// 	// Connect records to put / remove
+			// 	for (const clientId of update.added) {
+			// 		const state = states.get(clientId)
+			// 		if (state?.presence && state.presence.id !== presenceId) {
+			// 			toPut.push(state.presence)
+			// 		}
+			// 	}
 
-				for (const clientId of update.removed) {
-					toRemove.push(
-						InstancePresenceRecordType.createId(clientId.toString())
-					)
-				}
+			// 	for (const clientId of update.updated) {
+			// 		const state = states.get(clientId)
+			// 		if (state?.presence && state.presence.id !== presenceId) {
+			// 			toPut.push(state.presence)
+			// 		}
+			// 	}
 
-				// put / remove the records in the store
-				store.mergeRemoteChanges(() => {
-					if (toRemove.length) store.remove(toRemove)
-					if (toPut.length) store.put(toPut)
-				})
-			}
+			// 	for (const clientId of update.removed) {
+			// 		toRemove.push(
+			// 			InstancePresenceRecordType.createId(clientId.toString())
+			// 		)
+			// 	}
 
-			room.awareness.on('update', handleUpdate)
-			unsubs.push(() => room.awareness.off('update', handleUpdate))
+			// 	// put / remove the records in the store
+			// 	store.mergeRemoteChanges(() => {
+			// 		if (toRemove.length) store.remove(toRemove)
+			// 		if (toPut.length) store.put(toPut)
+			// 	})
+			// }
+
+			// room.awareness.on('update', handleUpdate)
+			// unsubs.push(() => room.awareness.off('update', handleUpdate))
 
 			// 2.
 			// Initialize the store with the yjs doc records—or, if the yjs doc
@@ -238,41 +264,41 @@ export function useYjsStore({
 			})
 		}
 
-		let hasConnectedBefore = false
+		// let hasConnectedBefore = false
 
-		function handleStatusChange({
-			status,
-		}: {
-			status: 'disconnected' | 'connected'
-		}) {
-			// If we're disconnected, set the store status to 'synced-remote' and the connection status to 'offline'
-			if (status === 'disconnected') {
-				setStoreWithStatus({
-					store,
-					status: 'synced-remote',
-					connectionStatus: 'offline',
-				})
-				return
-			}
+		// function handleStatusChange({
+		// 	status,
+		// }: {
+		// 	status: 'disconnected' | 'connected'
+		// }) {
+		// 	// If we're disconnected, set the store status to 'synced-remote' and the connection status to 'offline'
+		// 	if (status === 'disconnected') {
+		// 		setStoreWithStatus({
+		// 			store,
+		// 			status: 'synced-remote',
+		// 			connectionStatus: 'offline',
+		// 		})
+		// 		return
+		// 	}
 
-			room.off('synced', handleSync)
+		// 	room.off('synced', handleSync)
 
-			if (status === 'connected') {
-				if (hasConnectedBefore) return
-				hasConnectedBefore = true
-				room.on('synced', handleSync)
-				unsubs.push(() => room.off('synced', handleSync))
-			}
-		}
+		// 	if (status === 'connected') {
+		// 		if (hasConnectedBefore) return
+		// 		hasConnectedBefore = true
+		// 		room.on('synced', handleSync)
+		// 		unsubs.push(() => room.off('synced', handleSync))
+		// 	}
+		// }
 
-		room.on('status', handleStatusChange)
-		unsubs.push(() => room.off('status', handleStatusChange))
+		// room.on('status', handleStatusChange)
+		// unsubs.push(() => room.off('status', handleStatusChange))
 
 		return () => {
 			unsubs.forEach((fn) => fn())
 			unsubs.length = 0
 		}
-	}, [room, yDoc, store, yStore])
+	}, [/* room,  */yDoc, store, yStore])
 
 	return storeWithStatus
 }

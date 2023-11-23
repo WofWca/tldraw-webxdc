@@ -1,6 +1,11 @@
+// @ts-nocheck
+
 import { Tldraw, track, useEditor } from '@tldraw/tldraw'
 import '@tldraw/tldraw/tldraw.css'
 import { useYjsStore } from './useYjsStore'
+import { getAssetUrls } from '@tldraw/assets/selfHosted'
+
+const assetUrls = getAssetUrls({ baseUrl: './assets' })
 
 const HOST_URL =
 	import.meta.env.MODE === 'development'
@@ -15,7 +20,7 @@ export default function YjsExample() {
 
 	return (
 		<div className="tldraw__editor">
-			<Tldraw autoFocus store={store} shareZone={<NameEditor />} />
+			<Tldraw autoFocus store={store} shareZone={<NameEditor />} assetUrls={assetUrls} />
 		</div>
 	)
 }
